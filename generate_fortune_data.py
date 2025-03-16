@@ -4,7 +4,7 @@ import anthropic
 from typing import List, Dict, Any
 
 # Initialize the Anthropic client
-ANTHROPIC_API_KEY = "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"  # Replace with your API key if not using env variable
+ANTHROPIC_API_KEY = "" 
 client = anthropic.Anthropic(api_key = ANTHROPIC_API_KEY)
 
 # Load seed data from JSON file
@@ -204,7 +204,7 @@ def main():
         print(f"   Output: {example['output']}\n")
 
     # Save generated data
-    save_generated_data(new_examples, "generated_fortune_data.json")
+    save_generated_data(new_examples, "generated_data.json")
 
 if __name__ == "__main__":
     main()
