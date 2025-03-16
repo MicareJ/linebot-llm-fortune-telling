@@ -4,7 +4,7 @@ import anthropic
 from typing import List, Dict, Any
 
 # Initialize the Anthropic client
-ANTHROPIC_API_KEY = "" 
+# ANTHROPIC_API_KEY = "" 
 client = anthropic.Anthropic(api_key = ANTHROPIC_API_KEY)
 
 # Load seed data from JSON file
