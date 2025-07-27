@@ -1,1 +1,11 @@
 .DS_Store
+
+# 忽略 .credential 資料夾及其內容
+.credentials/
+.credentials/*
+
+# uv 虛擬環境
+.venv/
+
+# 環境變數或敏感檔案
+.env
