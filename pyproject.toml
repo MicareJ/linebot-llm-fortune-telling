@@ -1,0 +1,17 @@
+[project]
+name = "linebot-llm-fortune-telling"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "google-api-python-client>=2.177.0",
+    "google-auth-httplib2>=0.2.0",
+    "google-auth-oauthlib>=1.2.2",
+    "langchain>=0.3.27",
+    "langchain-chroma>=0.2.5",
+    "langchain-google-community[drive]>=2.0.7",
+    "langchain-ollama>=0.3.6",
+    "langchain-text-splitters>=0.3.9",
+    "numpy>=2.3.2",
+]
