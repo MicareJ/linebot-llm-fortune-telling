@@ -1,11 +1,23 @@
+# 作業系統檔案
 .DS_Store
+__pycache__/
+*.py[cod]
+*.log
 
-# 忽略 .credential 資料夾及其內容
+# 開發工具
+.venv/
+.vscode/
+.idea/
+*.ipynb_checkpoints
+
+# 憑證與敏感檔案
+.env
+token.json
+service_account.json
+
+# OAuth token credentials
 .credentials/
 .credentials/*
 
-# uv 虛擬環境
-.venv/
-
-# 環境變數或敏感檔案
-.env
+# Chroma 向量資料庫
+fortunetell_chroma__db/

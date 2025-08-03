@@ -1,0 +1,24 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "Docker",
+    "dockerfilePath": "Dockerfile"
+  },
+  "deploy": {
+    "startCommand": "python app.py",
+    "restartPolicyType": "ON_FAILURE"
+  },
+  "services": [
+    {
+      "name": "fortune-rag-app",
+      "sourceDir": ".",
+      "startCommand": "python app.py",
+      "envVars": [
+        "LINE_CHANNEL_ACCESS_TOKEN",
+        "LINE_CHANNEL_SECRET",
+        "FOLDER_ID",
+        "GDRIVE_SERVICE_ACCOUNT_B64"  
+      ]
+    }
+  ]
+}

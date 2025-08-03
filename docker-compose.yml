@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    container_name: fortune-rag-app
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    depends_on:
+      - chromadb
+      - ollama
+
+  chromadb:
+    image: chromadb/chromadb:latest
+    container_name: chromadb
+    ports:
+      - "8000:8000"
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
+volumes:
+  ollama:
