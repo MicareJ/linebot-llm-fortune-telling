@@ -21,3 +21,6 @@ service_account.json
 
 # Chroma 向量資料庫
 fortunetell_chroma__db/
+
+# 姓名資料集
+.data/

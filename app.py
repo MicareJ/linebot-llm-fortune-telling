@@ -3,7 +3,7 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from rag import rag
-from embedding import sync_drive_embeddings
+from rag.embedding import sync_drive_embeddings
 
 import os
 from dotenv import load_dotenv
