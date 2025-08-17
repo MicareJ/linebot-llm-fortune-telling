@@ -1,18 +1,23 @@
 import os
 import json
 import logging
+import re
 from typing import Dict, List, Tuple
+from functools import lru_cache
+from dotenv import load_dotenv
 
-logging.basicConfig(level=logging.INFO)
+load_dotenv()
 
-# 檔案路徑設定
-CNS_UNICODE_BMP_PATH = "data/Unicode/CNS2UNICODE_Unicode BMP.txt"
-CNS_STROKE_PATH = "data/CNS_Stroke_Table.txt"
-CACHE_PATH = "data/char_stroke_cache.json"
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
-# 快取字典
+# 從環境變數讀取路徑，適配 Fly.io Volumes
+CNS_UNICODE_BMP_PATH = os.getenv("CNS_UNICODE_BMP_PATH", "/data/Unicode/CNS2UNICODE_Unicode BMP.txt")
+CNS_STROKE_PATH = os.getenv("CNS_STROKE_PATH", "/data/CNS_Stroke_Table.txt")
+CACHE_PATH = os.getenv("CACHE_PATH", "/data/char_stroke_cache.json")
+
+# 全局快取字典
 char_to_stroke: Dict[str, int] = {}
-
 
 def _normalize_hex(s: str) -> str:
     """清理 Unicode hex 格式"""
@@ -21,96 +26,121 @@ def _normalize_hex(s: str) -> str:
         s = s[2:]
     if s.startswith("0X"):
         s = s[2:]
+    if not re.match(r'^[0-9A-F]+$', s):
+        raise ValueError(f"Invalid hex string: {s}")
     return s
-
 
 def load_cns_unicode_mapping(path: str) -> Dict[str, str]:
     """載入 BMP 對照表 (Unicode -> CNS)"""
     mapping = {}
-    if not os.path.exists(path):
-        logging.error(f"CNS Unicode BMP 對照表不存在: {path}")
+    try:
+        if not os.path.exists(path) or not os.access(path, os.R_OK):
+            logger.error(f"CNS Unicode BMP 對照表不存在或無讀取權限: {path}")
+            return mapping
+
+        with open(path, "r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#") or line.startswith("//"):
+                    continue
+
+                parts = line.split("\t")
+                if len(parts) < 2:
+                    parts = line.split()
+                if len(parts) < 2:
+                    continue
+
+                cns_code = parts[0].strip()
+                unicode_hex = _normalize_hex(parts[1])
+
+                try:
+                    ch = chr(int(unicode_hex, 16))
+                except ValueError:
+                    logger.warning(f"Invalid Unicode hex: {unicode_hex}")
+                    continue
+
+                mapping[ch] = cns_code
+        logger.info(f"Loaded {len(mapping)} Unicode to CNS mappings")
         return mapping
-
-    with open(path, "r", encoding="utf-8") as f:
-        for raw in f:
-            line = raw.strip()
-            if not line or line.startswith("#") or line.startswith("//"):
-                continue
-
-            parts = line.split("\t")
-            if len(parts) < 2:
-                parts = line.split()
-            if len(parts) < 2:
-                continue
-
-            cns_code = parts[0].strip()
-            unicode_hex = _normalize_hex(parts[1])
-
-            try:
-                ch = chr(int(unicode_hex, 16))
-            except:
-                continue
-
-            mapping[ch] = cns_code
-    return mapping
-
+    except Exception as e:
+        logger.error(f"Error loading Unicode mapping: {str(e)}")
+        return {}
 
 def load_cns_stroke_mapping(path: str) -> Dict[str, int]:
     """載入 CNS -> 筆畫數 對照"""
     mapping = {}
-    if not os.path.exists(path):
-        logging.error(f"CNS 筆畫數檔不存在: {path}")
-        return mapping
+    try:
+        if not os.path.exists(path) or not os.access(path, os.R_OK):
+            logger.error(f"CNS 筆畫數檔不存在或無讀取權限: {path}")
+            return mapping
 
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip() or line.startswith("#"):
-                continue
-            parts = line.strip().split()
-            if len(parts) >= 2:
-                cns_code, stroke = parts[:2]
-                try:
-                    mapping[cns_code] = int(stroke)
-                except:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip() or line.startswith("#"):
                     continue
-    return mapping
-
+                parts = line.strip().split()
+                if len(parts) >= 2:
+                    cns_code, stroke = parts[:2]
+                    try:
+                        mapping[cns_code] = int(stroke)
+                    except ValueError:
+                        logger.warning(f"Invalid stroke count: {stroke} for {cns_code}")
+                        continue
+        logger.info(f"Loaded {len(mapping)} CNS to stroke mappings")
+        return mapping
+    except Exception as e:
+        logger.error(f"Error loading stroke mapping: {str(e)}")
+        return {}
 
 def build_char_to_stroke_cache():
     """建立 char -> stroke 快取"""
-    unicode_to_cns = load_cns_unicode_mapping(CNS_UNICODE_BMP_PATH)
-    cns_to_stroke = load_cns_stroke_mapping(CNS_STROKE_PATH)
+    try:
+        unicode_to_cns = load_cns_unicode_mapping(CNS_UNICODE_BMP_PATH)
+        cns_to_stroke = load_cns_stroke_mapping(CNS_STROKE_PATH)
 
-    mapping = {}
-    for ch, cns in unicode_to_cns.items():
-        mapping[ch] = cns_to_stroke.get(cns, -1)
+        if not unicode_to_cns or not cns_to_stroke:
+            raise ValueError("Mapping files are empty or invalid")
 
-    with open(CACHE_PATH, "w", encoding="utf-8") as f:
-        json.dump(mapping, f, ensure_ascii=False)
+        mapping = {}
+        for ch, cns in unicode_to_cns.items():
+            mapping[ch] = cns_to_stroke.get(cns, -1)
 
-    return mapping
-
+        try:
+            with open(CACHE_PATH, "w", encoding="utf-8") as f:
+                json.dump(mapping, f, ensure_ascii=False)
+            logger.info(f"Built and saved stroke cache with {len(mapping)} entries")
+        except Exception as e:
+            logger.error(f"Error saving cache: {str(e)}")
+        return mapping
+    except Exception as e:
+        logger.error(f"Error building cache: {str(e)}")
+        return {}
 
 def load_char_to_stroke_cache():
-    """載入快取，如果沒有則建立"""
+    """載入快取，如果沒有則建立（模組層級呼叫一次）"""
     global char_to_stroke
-    if os.path.exists(CACHE_PATH):
-        with open(CACHE_PATH, "r", encoding="utf-8") as f:
-            char_to_stroke = json.load(f)
-    else:
-        char_to_stroke = build_char_to_stroke_cache()
+    try:
+        if os.path.exists(CACHE_PATH) and os.access(CACHE_PATH, os.R_OK):
+            with open(CACHE_PATH, "r", encoding="utf-8") as f:
+                char_to_stroke = json.load(f)
+            logger.info(f"Loaded stroke cache with {len(char_to_stroke)} entries")
+        else:
+            logger.warning("Cache not found, building new one")
+            char_to_stroke = build_char_to_stroke_cache()
+    except Exception as e:
+        logger.error(f"Error loading cache: {str(e)}")
+        char_to_stroke = {}
 
+# 模組載入時自動載入快取
+load_char_to_stroke_cache()
 
+def validate_name(name: str) -> bool:
+    """驗證姓名是否為繁體中文"""
+    return bool(re.match(r"^[\u4e00-\u9fff]+$", name))
+
+@lru_cache(maxsize=100)
 def get_name_stroke_info(name: str) -> List[Tuple[str, int]]:
     """查詢姓名的每個字筆畫數"""
+    if not validate_name(name):
+        raise ValueError("姓名必須為繁體中文")
     return [(ch, char_to_stroke.get(ch, -1)) for ch in name]
-
-
-def format_name_strokes_prompt(name: str) -> str:
-    """格式化成適合給 LLM 的輸入字串"""
-    strokes = get_name_stroke_info(name)
-    lines = ["姓名筆畫分析："]
-    for ch, s in strokes:
-        lines.append(f"字：{ch} → 筆畫數：{s if s != -1 else '未知'}")
-    return "\n".join(lines)
-
