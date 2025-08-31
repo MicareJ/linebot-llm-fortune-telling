@@ -1,7 +1,7 @@
 import logging
 from functools import lru_cache
 from typing import Dict
-from stroke_lookup import load_char_to_stroke_cache, get_name_stroke_info, validate_name
+from .stroke_lookup import load_char_to_stroke_cache, get_name_stroke_info, validate_name
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

@@ -1,0 +1,10 @@
+app = "linebot-llm-fortune-telling"
+
+[build]
+
+[http_service]
+  internal_port = 5000
+  force_https = true
+
+[env]
+  PORT = "5000"

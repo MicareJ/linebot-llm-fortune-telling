@@ -12,9 +12,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # 從環境變數讀取路徑，適配 Fly.io Volumes
-CNS_UNICODE_BMP_PATH = os.getenv("CNS_UNICODE_BMP_PATH", "/data/Unicode/CNS2UNICODE_Unicode BMP.txt")
-CNS_STROKE_PATH = os.getenv("CNS_STROKE_PATH", "/data/CNS_Stroke_Table.txt")
-CACHE_PATH = os.getenv("CACHE_PATH", "/data/char_stroke_cache.json")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CNS_UNICODE_BMP_PATH = os.path.join(BASE_DIR, "data", "CNS2UNICODE_Unicode_BMP.txt")
+CNS_STROKE_PATH = os.path.join(BASE_DIR, "data", "CNS_stroke.txt")
+CACHE_PATH = os.path.join(BASE_DIR, "data", "char_stroke_cache.json")
 
 # 全局快取字典
 char_to_stroke: Dict[str, int] = {}
