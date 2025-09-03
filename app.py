@@ -170,7 +170,7 @@ def handle_message(event):
                 ReplyMessageRequest(
                     reply_token=reply_token,
                     messages=[
-                        TextMessage(text="嘿！算命小童上線！請輸入您的中文姓名：")
+                        TextMessage(text="小傑上線！你叫什麼名字：")
                     ]
                 )
             )
@@ -189,7 +189,7 @@ def handle_message(event):
                     reply_token=reply_token,
                     messages=[
                         TextMessage(
-                            text="嘿！想讓算命小童幫你算命嗎？點下方按鈕開始吧！",
+                            text="貨出的去，錢進得來，你會發大財！點下方按鈕開始吧",
                             quick_reply=quick_reply
                         )
                     ]
@@ -204,7 +204,7 @@ def handle_message(event):
                     ReplyMessageRequest(
                         reply_token=reply_token,
                         messages=[
-                            TextMessage(text="喂喂，姓名得是中文才行！別給我火星文，重新來！")
+                            TextMessage(text="你的名字跟我家隔壁的柯基沒兩樣，重打一次！")
                         ]
                     )
                 )
@@ -216,7 +216,7 @@ def handle_message(event):
                 ReplyMessageRequest(
                     reply_token=reply_token,
                     messages=[
-                        TextMessage(text="姓名收到！請輸入您的出生日期（像 YYYY-MM-DD）：")
+                        TextMessage(text="OK！生日幾號（YYYY-MM-DD）：")
                     ]
                 )
             )
@@ -228,7 +228,7 @@ def handle_message(event):
                     ReplyMessageRequest(
                         reply_token=reply_token,
                         messages=[
-                            TextMessage(text="欸日期錯了啦！再皮叫你自己自生自滅")
+                            TextMessage(text="欸！再皮叫你自生自滅")
                         ]
                     )
                 )
@@ -240,7 +240,7 @@ def handle_message(event):
                 ReplyMessageRequest(
                     reply_token=reply_token,
                     messages=[
-                        TextMessage(text="日期 OK！請輸入您的出生時間（HH，0-23）：")
+                        TextMessage(text="OK！你幾點出生的（0-23）")
                     ]
                 )
             )
@@ -252,7 +252,7 @@ def handle_message(event):
                     ReplyMessageRequest(
                         reply_token=reply_token,
                         messages=[
-                            TextMessage(text="你確定你真的出生在這種時間？！")
+                            TextMessage(text="你要確欸？！")
                         ]
                     )
                 )
@@ -264,7 +264,7 @@ def handle_message(event):
                 ReplyMessageRequest(
                     reply_token=reply_token,
                     messages=[
-                        TextMessage(text="時間收到！請輸入您的出生地（城市名）：")
+                        TextMessage(text="好咧！那你媽在哪把你生出來的")
                     ]
                 )
             )
@@ -291,7 +291,7 @@ def handle_message(event):
                 ReplyMessageRequest(
                     reply_token=reply_token,
                     messages=[
-                        TextMessage(text="資料已收集完成，請告訴我您想詢問的問題。")
+                        TextMessage(text="好！說！你想問什麼")
                     ]
                 )
             )
@@ -323,7 +323,7 @@ def handle_message(event):
             ReplyMessageRequest(
                 reply_token=reply_token,
                 messages=[
-                    TextMessage(text="哎喲，小童的Line訊號被外星人搶走啦！稍後再試哈哈！")
+                    TextMessage(text="都你啦 再不繳電話費阿！沒訊號了啦")
                 ]
             )
         )
@@ -334,7 +334,7 @@ def handle_message(event):
             ReplyMessageRequest(
                 reply_token=reply_token,
                 messages=[
-                    TextMessage(text="哈哈，小童的算命攤出包啦！請再試一次！")
+                    TextMessage(text="靠！哪個工程師寫的爛軟體，出問題了啦")
                 ]
             )
         )

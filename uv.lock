@@ -1163,7 +1163,7 @@ wheels = [
 
 [[package]]
 name = "line-bot-sdk"
-version = "3.17.1"
+version = "3.19.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aenum" },
@@ -1175,9 +1175,9 @@ dependencies = [
     { name = "requests" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/08/ae/7be821f6d286ac4f0497caa3e4ff699f4e99ab405adf2044a5b6bc83cc71/line_bot_sdk-3.17.1.tar.gz", hash = "sha256:b4b1300fa0661dac4c98e3df9467f249b16c7f767f226614c099a48346e135ae", size = 456527, upload-time = "2025-04-25T03:30:46.52Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/31/89bc07122c09d73a90a4f44b10cc4d5976faeccd2fa7a090652a1b4fcbbc/line_bot_sdk-3.19.0.tar.gz", hash = "sha256:675f9ebe5a551aff53bbf3344a0c66e4d43795cca00b9b6ea5acd7eccfdcc116", size = 466642, upload-time = "2025-08-26T01:48:28.144Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/32/ed6471753080e41d61156212d0032affda2d6d615b8933d2bafc65347e14/line_bot_sdk-3.17.1-py2.py3-none-any.whl", hash = "sha256:74ac0aa0a1f67ad51661f95843b5a090dad0cb178d14ae28b7fa81af35315ab7", size = 776059, upload-time = "2025-04-25T03:30:44.224Z" },
+    { url = "https://files.pythonhosted.org/packages/69/ee/98d74d8d76ecd0a5e202b8d08f65c5fc08e1878786123685db38aad54405/line_bot_sdk-3.19.0-py2.py3-none-any.whl", hash = "sha256:7aeb8cafa4fec826d7092e7aea4e84b2a6c30e2839b396a5ab9ae69d5c8ff3c0", size = 816429, upload-time = "2025-08-26T01:48:25.928Z" },
 ]
 
 [[package]]
@@ -1222,7 +1222,7 @@ requires-dist = [
     { name = "langchain-huggingface", specifier = ">=0.3.1" },
     { name = "langchain-ollama", specifier = ">=0.3.6" },
     { name = "langchain-text-splitters", specifier = ">=0.3.9" },
-    { name = "line-bot-sdk", specifier = ">=3.17.1" },
+    { name = "line-bot-sdk", specifier = ">=3.19.0" },
     { name = "numpy", specifier = ">=2.3.2" },
     { name = "redis", specifier = ">=6.4.0" },
     { name = "schedule", specifier = ">=1.2.2" },
