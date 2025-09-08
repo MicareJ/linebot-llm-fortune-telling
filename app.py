@@ -13,7 +13,8 @@ import logging
 import re
 from datetime import datetime
 from redis import Redis
-from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import base64
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import requests
@@ -38,7 +39,149 @@ api_client = ApiClient(configuration)
 line_bot_api = MessagingApi(api_client)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 redis_client = Redis.from_url(REDIS_URL, decode_responses=True)
-cipher = Fernet(os.getenv("FERNET_KEY"))  # Fly.io Secrets 提供 key
+
+AES_KEY_TTL = 3600
+
+def _redis_aeskey_name(user_id: str) -> str:
+    return f"aeskey:{user_id}"
+
+def _redis_session_name(user_id: str) -> str:
+    return f"session:{user_id}"
+
+def ensure_aes_key(user_id: str, ttl: int = AES_KEY_TTL) -> bytes:
+    """
+    產生或取得 AES-256 key（32 bytes），以 base64 存到 Redis，並設定 TTL。
+    回傳原始 bytes。
+    """
+    key_name = _redis_aeskey_name(user_id)
+    try:
+        b64 = redis_client.get(key_name)
+    except Exception:
+        b64 = None
+    if b64:
+        try:
+            return base64.b64decode(b64)
+        except Exception:
+            # 若 decode 失敗，重新產生
+            pass
+    # 產生新 key 並存 Redis（以 base64 儲存）
+    key = os.urandom(32)
+    try:
+        redis_client.setex(key_name, ttl, base64.b64encode(key).decode())
+    except Exception:
+        # 若 Redis 寫入失敗，不要拋出明文 key；僅回傳 key（短期記憶）
+        # 但若 Redis 無法使用，自動遺忘機制將無法保證
+        pass
+    return key
+
+def encrypt_and_store_session(user_id: str, session: dict):
+    """
+    使用 AES-GCM 加密 session dict，並把 ciphertext / nonce / tag 以 base64 存回 Redis 的 session key。
+    同時把 session key 設定與 AES key 相同的 TTL，確保金鑰過期時密文也會被刪除。
+    """
+    if session is None:
+        return
+    # 序列化
+    plaintext = json.dumps(session, ensure_ascii=False).encode("utf-8")
+    # 取得或產生金鑰
+    key_name = _redis_aeskey_name(user_id)
+    key = ensure_aes_key(user_id)
+
+    aesgcm = AESGCM(key)
+    nonce = os.urandom(12)  # 96-bit nonce 建議
+    ct_with_tag = aesgcm.encrypt(nonce, plaintext, associated_data=None)  # returns ciphertext||tag
+    # 分離 tag（最後 16 bytes）與 ciphertext
+    tag = ct_with_tag[-16:]
+    ciphertext = ct_with_tag[:-16]
+    payload = {
+        "ciphertext": base64.b64encode(ciphertext).decode(),
+        "nonce": base64.b64encode(nonce).decode(),
+        "tag": base64.b64encode(tag).decode(),
+    }
+
+    # 取得 AES key 在 Redis 上的剩餘 TTL（秒）
+    try:
+        ttl_remain = redis_client.ttl(key_name)
+    except Exception:
+        ttl_remain = -2  # error -> treat as no ttl
+
+    # 決定要設定給 session key 的 TTL：
+    # 如果 ttl_remain > 0 使用它；否則 fallback 到預設 AES_KEY_TTL
+    if not (isinstance(ttl_remain, int) and ttl_remain > 0):
+        logger.info("Skip storing session: AES key expired/missing (user=%s, ttl=%s)", user_id, ttl_remain)
+        return
+
+    session_ttl = ttl_remain  # 與金鑰完全同步 TTL
+
+    # 存回 Redis 並設定相同 TTL（使用 setex 保證同時過期）
+    try:
+        redis_client.setex(_redis_session_name(user_id), session_ttl, json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        logger.exception("Failed to store encrypted session for user %s", user_id)
+
+def decrypt_session(user_id: str) -> dict | None:
+    """
+    嘗試從 Redis 取出 AES key（若 key TTL 尚在），並解密 session。
+    若金鑰不存在或驗證失敗，回傳 None（表示無法還原明文）。
+    """
+    try:
+        b64key = redis_client.get(_redis_aeskey_name(user_id))
+    except Exception:
+        b64key = None
+    if not b64key:
+        # 金鑰遺失（TTL 到期）或 Redis 不可用 -> 無法解密
+        return None
+    try:
+        key = base64.b64decode(b64key)
+    except Exception:
+        return None
+    # 取出 ciphertext payload
+    try:
+        payload_raw = redis_client.get(_redis_session_name(user_id))
+    except Exception:
+        payload_raw = None
+    if not payload_raw:
+        return None
+    try:
+        payload = json.loads(payload_raw)
+        ciphertext = base64.b64decode(payload["ciphertext"])
+        nonce = base64.b64decode(payload["nonce"])
+        tag = base64.b64decode(payload["tag"])
+        ct_with_tag = ciphertext + tag
+        aesgcm = AESGCM(key)
+        plaintext = aesgcm.decrypt(nonce, ct_with_tag, associated_data=None)
+        return json.loads(plaintext.decode("utf-8"))
+    except Exception:
+        # 解密或解析失敗 -> 回傳 None
+        logger.debug("Decrypt session failed or key invalid for user %s", user_id, exc_info=True)
+        return None
+
+def clear_session(user_id: str):
+    """刪除 session ciphertext 與 AES 金鑰（如果存在）"""
+    try:
+        redis_client.delete(_redis_session_name(user_id))
+    except Exception:
+        logger.debug("Failed to delete session ciphertext for %s", user_id, exc_info=True)
+    try:
+        redis_client.delete(_redis_aeskey_name(user_id))
+    except Exception:
+        logger.debug("Failed to delete aes key for %s", user_id, exc_info=True)
+
+def save_session(user_id: str, session: dict):
+    """使用 AES-GCM 加密並存儲 session。"""
+    try:
+        encrypt_and_store_session(user_id, session)
+    except Exception:
+        logger.exception("save_session failed for %s", user_id)
+
+def load_session(user_id: str) -> dict:
+    """嘗試解密 session；若解密失敗或金鑰過期，回傳空 dict。"""
+    try:
+        result = decrypt_session(user_id)
+        return result or {}
+    except Exception:
+        logger.exception("load_session failed for %s", user_id)
+        return {}
 
 # 速率限制
 limiter = Limiter(app=app,
@@ -89,18 +232,6 @@ def get_location_coordinates_and_timezone(location: str) -> tuple[float, str]:
         logger.error("Google Geocode/Timezone error: %s", str(e))
         return 121.5654, "Asia/Taipei"
 
-def save_session(user_id: str, session: dict):
-    """加密並儲存會話到 Redis，TTL 1小時"""
-    encrypted = cipher.encrypt(json.dumps(session).encode()).decode()
-    redis_client.setex(user_id, 3600, encrypted)
-
-def load_session(user_id: str) -> dict:
-    """從 Redis 讀取並解密會話"""
-    encrypted = redis_client.get(user_id)
-    if encrypted:
-        return json.loads(cipher.decrypt(encrypted.encode()).decode())
-    return {}
-
 @app.route("/callback", methods=["POST"])
 @limiter.limit("10 per minute")
 def callback():
@@ -126,57 +257,35 @@ def handle_message(event):
     try:
         session = load_session(user_id)
 
-        # 重置命令
-        if text == "重來一次":
+        if text == "差不多啦！":
             redis_client.delete(user_id)
             line_bot_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=reply_token,
                     messages=[
                         TextMessage(
-                            text="哈哈，小童把你的命盤清空啦！點「開始算命」重新來過吧！",
-                            quick_reply=QuickReply(
-                                items=[
-                                    QuickReplyItem(action=MessageAction(label="開始算命", text="開始算命")),
-                                    QuickReplyItem(action=MessageAction(label="取消", text="取消"))
-                                ]
-                            )
+                            text="Yes！下班！"
                         )
                     ]
                 )
             )
             return
 
-        # 取消命令
-        if text == "取消":
-            redis_client.delete(user_id)
-            line_bot_api.reply_message(
-                ReplyMessageRequest(
-                    reply_token=reply_token,
-                    messages=[
-                        TextMessage(
-                            text="好吧，小童先下班啦！想算命再喊我哦！"
-                        )
-                    ]
-                )
-            )
-            return
-
-        # 開始算命入口
-        if text in ["開始算命"]:
+        # 開始算命
+        if text == "開始！":
             session = {"step": 0}
             save_session(user_id, session)
             line_bot_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=reply_token,
                     messages=[
-                        TextMessage(text="小傑上線！你叫什麼名字：")
+                        TextMessage(text="煩欸又要上班了！你叫什麼名字啦")
                     ]
                 )
             )
             return
 
-        # 新用戶或未啟動流程
+        # 新使用者或session已過期
         if not session:
             quick_reply = QuickReply(
                 items=[
@@ -211,12 +320,11 @@ def handle_message(event):
                 return
             session["name"] = text
             session["step"] = 1
-            save_session(user_id, session)
             line_bot_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=reply_token,
                     messages=[
-                        TextMessage(text="OK！生日幾號（YYYY-MM-DD）：")
+                        TextMessage(text="生日幾號（YYYY-MM-DD）")
                     ]
                 )
             )
@@ -235,7 +343,6 @@ def handle_message(event):
                 return
             session["birth_date"] = text
             session["step"] = 2
-            save_session(user_id, session)
             line_bot_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=reply_token,
@@ -252,19 +359,18 @@ def handle_message(event):
                     ReplyMessageRequest(
                         reply_token=reply_token,
                         messages=[
-                            TextMessage(text="你要確欸？！")
+                            TextMessage(text="你要確定欸？！")
                         ]
                     )
                 )
                 return
             session["birth_time"] = text
             session["step"] = 3
-            save_session(user_id, session)
             line_bot_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=reply_token,
                     messages=[
-                        TextMessage(text="好咧！那你媽在哪把你生出來的")
+                        TextMessage(text="那你媽在哪把你生出來的？")
                     ]
                 )
             )
@@ -291,7 +397,7 @@ def handle_message(event):
                 ReplyMessageRequest(
                     reply_token=reply_token,
                     messages=[
-                        TextMessage(text="好！說！你想問什麼")
+                        TextMessage(text="好啦說！你想問什麼")
                     ]
                 )
             )
@@ -323,7 +429,7 @@ def handle_message(event):
             ReplyMessageRequest(
                 reply_token=reply_token,
                 messages=[
-                    TextMessage(text="都你啦 再不繳電話費阿！沒訊號了啦")
+                    TextMessage(text="都你啦再不繳電話費阿！沒訊號了啦")
                 ]
             )
         )

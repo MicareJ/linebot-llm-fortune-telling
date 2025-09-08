@@ -1,8 +1,8 @@
 # 🧠 Fortune Telling RAG System with LINE Bot
 
-本專案為一個具備「中國命理分析」能力的聊天系統，結合：
+這是一個具備姓名學和八字五行分析能力的聊天機器人，結合：
 
-- ✅ **LangChain + Ollama**：處理五行與姓名學分析
+- ✅ **LangChain + Huggingface**：處理五行與姓名學分析
 - ✅ **Google Drive 文件嵌入**：建立私有知識庫（使用 Google Service Account）
 - ✅ **Chroma 向量資料庫**：用於 RAG 檢索
 - ✅ **LINE Bot 介接**：讓使用者從 LINE 傳送訊息互動
@@ -96,5 +96,6 @@ dependencies = [
 有問題歡迎開 Issue 或聯絡開發者。
 
 ```
+Sonny Huang
 email: partlysunny31@pm.me
 ```
