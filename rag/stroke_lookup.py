@@ -1,17 +1,17 @@
 import os
 import json
-import logging
 import re
 from typing import Dict, List, Tuple
 from functools import lru_cache
 from dotenv import load_dotenv
 
+from core.logger_config import setup_logger
+
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+logger = setup_logger('stroke_lookup')
 
-# 從環境變數讀取路徑，適配 Fly.io Volumes
+# 從環境變數讀取路徑
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CNS_UNICODE_BMP_PATH = os.path.join(BASE_DIR, "data", "CNS2UNICODE_Unicode_BMP.txt")
 CNS_STROKE_PATH = os.path.join(BASE_DIR, "data", "CNS_stroke.txt")

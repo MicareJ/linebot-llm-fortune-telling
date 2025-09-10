@@ -23,7 +23,10 @@
 ├── pyproject.toml             # uv 套件管理設定
 ├── fortunetell_chroma__db/    # Chroma 向量資料庫 (可忽略追蹤)
 ```
-
+    1. 產生一次性 DEK (32 bytes)
+    2. 用 DEK (AES-GCM) 加密 session -> session_ciphertext / session_nonce / session_tag
+    3. 用 Master Key (KEK, AES-GCM) 加密 DEK -> encrypted_dek / dek_nonce / dek_tag
+    4. 將上述全部（base64後）寫入 Redis，設定 SESSION_TTL
 ---
 
 ## ⚙️ 安裝與啟動（使用 Docker）

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -9,10 +8,11 @@ from functools import lru_cache
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from dotenv import load_dotenv
 
+from core.logger_config import setup_logger
+
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+logger = setup_logger('bazi_true_solar')
 
 GAN = ["甲","乙","丙","丁","戊","己","庚","辛","壬","癸"]
 ZHI = ["子","丑","寅","卯","辰","巳","午","未","申","酉","戌","亥"]

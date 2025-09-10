@@ -1,10 +1,10 @@
-import logging
 from functools import lru_cache
 from typing import Dict
 from .stroke_lookup import load_char_to_stroke_cache, get_name_stroke_info, validate_name
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+from core.logger_config import setup_logger
+
+logger = setup_logger('name_fivegrid_wuxing')
 
 def stroke_to_wuxing(stroke: int) -> str:
     """根據筆畫數判斷五行"""

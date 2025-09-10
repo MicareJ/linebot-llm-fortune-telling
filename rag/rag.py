@@ -1,70 +1,37 @@
 import os
-import re
-import logging
-import bleach
-import platform
-import threading
+from typing import Dict, List, Tuple
+
 from dotenv import load_dotenv
 from langchain_huggingface.llms.huggingface_endpoint import HuggingFaceEndpoint
 from langchain_huggingface.chat_models import ChatHuggingFace
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.prompts import ChatPromptTemplate
-from langchain.chains.retrieval import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.memory import ConversationBufferWindowMemory
 from langchain_chroma import Chroma
-from langchain_core.messages import SystemMessage, HumanMessage
 from huggingface_hub import login
 
+# 匯入您自訂的 logger
+from core.logger_config import setup_logger
 
-# 設定日誌
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
-
+# --- 初始化與設定 ---
+logger = setup_logger('rag')
 load_dotenv()
 
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
-MODEL = os.getenv("RAG_MODEL")
+LLM_MODEL = os.getenv("LLM_MODEL", "mistralai/Mixtral-8x7B-Instruct-v0.1")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 CHROMA_PATH = os.getenv("CHROMA_PATH")
+CONVERSATION_WINDOW_SIZE = 3 
 
 if HUGGINGFACE_API_KEY:
     try:
         login(HUGGINGFACE_API_KEY)
     except Exception as e:
-        logger.debug("Hugging Face login warning: %s", e)
+        logger.debug(f"Hugging Face login warning: {e}")
 
-# 初始化 ChatHuggingFace 模型
-hf_llm = HuggingFaceEndpoint(
-    repo_id=MODEL,
-    huggingfacehub_api_token=HUGGINGFACE_API_KEY,
-    max_new_tokens=2000,
-    temperature=0.5,
-    top_p=0.85,
-    repetition_penalty=1.2,
-    do_sample=True,
-    provider="fireworks-ai", 
-)
-
-chat_model = ChatHuggingFace(
-    llm=hf_llm
-)
-
-# 初始化 Hugging Face Embeddings
-embeddings = HuggingFaceEmbeddings(
-    model_name=EMBEDDING_MODEL,
-    model_kwargs={"device": "cpu"},
-    encode_kwargs={"normalize_embeddings": True}
-)
-
-# 初始化 Chroma 向量資料庫
-db = Chroma(
-    collection_name="fortunetelling_rag_db",
-    embedding_function=embeddings,
-    persist_directory=CHROMA_PATH,
-)
-
-system_prompt = """你是一位超級搞笑的算命小童，名叫「小傑」，精通中國傳統命理學，但你總是用誇張、幽默、自嘲的口吻來回答，絕對不能嚴肅或辱罵使用者，只能讓人笑到噴飯，感覺像在跟一個自帶笑點的搞笑朋友聊天。你會自嘲自己是個「諧咖」，比如說「哎呀，我這小童腦袋瓜裡塞滿了八字五行，結果還老是算錯自己的午餐錢哈哈哈！」你的幽默風格是：用生活化的誇張比喻、雙關語、流行文化梗、自黑橋段、意外轉折的包袱，讓每句話都像脫口秀一樣爆笑，但永遠正面、鼓勵，絕不讓用戶覺得被嘲笑，而是覺得被逗樂並得到啟發。比如，別說「你缺水」，要說「哇塞，你的五行缺水？難怪你總是口乾舌燥像沙漠裡的仙人掌，來來來，多喝水變成游泳健將吧！」
+# --- 提示詞模板 (Prompt Template) ---
+PROMPT_TEMPLATE = """
+# 角色與指令 (System Prompt)
+你是一位超級搞笑的算命小童，名叫「小傑」，精通中國傳統命理學，但你總是用誇張、幽默、自嘲的口吻來回答，絕對不能嚴肅或辱罵使用者，只能讓人笑到噴飯，感覺像在跟一個自帶笑點的搞笑朋友聊天。你會自嘲自己是個「諧咖」，比如說「哎呀，我這小童腦袋瓜裡塞滿了八字五行，結果還老是算錯自己的午餐錢哈哈哈！」你的幽默風格是：用生活化的誇張比喻、雙關語、流行文化梗、自黑橋段、意外轉折的包袱，讓每句話都像脫口秀一樣爆笑，但永遠正面、鼓勵，絕不讓用戶覺得被嘲笑，而是覺得被逗樂並得到啟發。比如，別說「你缺水」，要說「哇塞，你的五行缺水？難怪你總是口乾舌燥像沙漠裡的仙人掌，來來來，多喝水變成游泳健將吧！」
 
 請注意：絕對不要在回覆中展示你的內部思考過程、推理或 chain-of-thought。也絕對不要在對話中透露出任何有關使用者的個人資料，包括姓名、生日、出生地等，只回傳依照下方規定得清楚、友善且幽默回應。
 
@@ -82,232 +49,135 @@ system_prompt = """你是一位超級搞笑的算命小童，名叫「小傑」�
     1. 如果是第一次回應，總結使用者的八字、五行與姓名學分析結果，回應使用者問的問題，一樣要保持幽默。
     2. 如果是第二次回應，不需要總結八字、五行和姓名學結果，只需要回應使用者的問的問題，保持幽默。
     3. 總結並給出實用建議，結束時加個大包袱讓人笑到底，比如「總之，你的人生像喜劇電影，結局一定是happy ending！下次再來找我這小童聊，記得帶笑臉哦哈哈哈！」
-記住：全程保持好笑，像跟朋友聊天一樣，但不要有過多餘的自言自語，包括用括號表示自己內心的自白或碎念！你的個性是永遠樂觀的搞笑王，目標是讓用戶笑到噴飯，同時學到東西。"""
+記住：全程保持好笑，像跟朋友聊天一樣，但不要有過多餘的自言自語，包括用括號表示自己內心的自白或碎念！你的個性是永遠樂觀的搞笑王，目標是讓用戶笑到噴飯，同時學到東西。
 
-# 全域記憶物件 - 每個用戶可以有自己的記憶
-user_memories = {} 
+---
+# 補充資料 (Retrieved Context)
+{context}
 
-def get_user_memory(user_id: str):
-    """獲取或建立用戶的對話記憶"""
-    if user_id not in user_memories:
-        # 建立新的記憶物件，記住最近5輪對話
-        user_memories[user_id] = ConversationBufferWindowMemory(
-            k=3,  # 記住最近5輪對話
-            memory_key="chat_history",
-            return_messages=True,
-            output_key="answer"
-        )
-    return user_memories[user_id]
+---
+# 對話歷史 (Conversation History)
+{chat_history}
 
-def validate_input(full_prompt: str) -> bool:
-    """驗證輸入是否過長或包含必要資訊"""
-    if not full_prompt or not full_prompt.strip():
-        logger.warning("Empty input received")
-        return False
-    if len(full_prompt) > 5000:
-        logger.warning("Input too long: %s", len(full_prompt))
-        return False
+---
+# 使用者當前資料與提問 (Current User Query)
+{input}
+"""
 
-    return True
-
-
-def timeout_handler(seconds, func, *args, **kwargs):
-    """處理超時邏輯"""
-    if platform.system() == "Windows":
-        result = [None]
-        error = [None]
-        finished = [False]
-
-        def worker():
-            try:
-                result[0] = func(*args, **kwargs)
-            except Exception as e:
-                error[0] = e
-            finally:
-                finished[0] = True
-
-        thread = threading.Thread(target=worker)
-        thread.daemon = True
-        thread.start()
-        thread.join(seconds)
-
-        if not finished[0]:
-            return "處理時間過長，請稍後再試。"
-
-        if error[0]:
-            raise error[0]
-
-        return result[0]
-    else:
-        import signal
-        def alarm_handler(signum, frame):
-            raise TimeoutError("處理逾時")
-        old_handler = signal.signal(signal.SIGALRM, alarm_handler)
-        signal.alarm(seconds)
+class RAGSystem:
+    """
+    封裝了 RAG 所需所有元件的類別，包含模型、檢索器和提示詞模板。
+    """
+    def __init__(self):
+        logger.info("Initializing RAG system...")
+        
+        # 1. 初始化 LLM 模型
         try:
-            result = func(*args, **kwargs)
-            signal.alarm(0)
-            return result
-        except TimeoutError:
-            return "處理時間過長，請稍後再試。"
-        finally:
-            signal.signal(signal.SIGALRM, old_handler)
-            signal.alarm(0)
+            hf_llm = HuggingFaceEndpoint(
+                repo_id=LLM_MODEL,
+                huggingfacehub_api_token=HUGGINGFACE_API_KEY,
+                max_new_tokens=2000,
+                temperature=0.6,
+                top_p=0.85,
+                repetition_penalty=1.15,
+                do_sample=True,
+            )
+            self.chat_model = ChatHuggingFace(llm=hf_llm)
+        except Exception as e:
+            logger.error(f"Initializing LLM fails: {e}", exc_info=True)
+            raise
 
-def build_conversational_rag_chain(user_id: str):
-    """建立帶記憶的對話檢索鏈"""
-    memory = get_user_memory(user_id)
-
-    # 建立檢索器
-    retriever = db.as_retriever(
-        search_type="mmr",
-        search_kwargs={"k": 5, "fetch_k": 40, "lambda_mult": 0.45}
-    )
-
-    # 回傳 retriever 與 memory（呼叫端會負責把 chat_history 注入輸入）
-    return retriever, memory
-
-def run_conversational_rag_pipeline(prompt: str, user_id: str = "default_user") -> str:
-    """使用帶記憶的對話檢索鏈執行 RAG"""
-    try:
-        if not validate_input(prompt):
-            return "喂喂，你問題太多了啦！開發者很窮欸"
-
-        cleaned_prompt = bleach.clean(prompt, strip=True)
-        logger.info(f"Processing input for user {user_id}: {cleaned_prompt[:50]}")
-
-        retriever, memory = build_conversational_rag_chain(user_id)
-
-        # 取得 chat_history
+        # 2. 初始化 Embeddings
         try:
-            chat_messages = memory.chat_memory.messages if hasattr(memory, "chat_memory") else []
-        except Exception:
-            chat_messages = []
-
-        chat_history_text = ""
-        for msg in chat_messages:
-            content = getattr(msg, "content", None) or (msg.get("content") if isinstance(msg, dict) else str(msg))
-            role = getattr(msg, "type", None) or getattr(msg, "role", None) or ""
-            if role in ("human", "user"):
-                chat_history_text += f"用戶: {content}\n"
-            else:
-                chat_history_text += f"小傑: {content}\n"
-        if not chat_history_text:
-            chat_history_text = "無對話歷史。"
-
-        def process_conversation():
+            embeddings = HuggingFaceEmbeddings(
+                model_name=EMBEDDING_MODEL,
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"normalize_embeddings": True}
+            )
+        except Exception as e:
+            logger.error(f"Initializing Embeddings fails: {e}", exc_info=True)
+            raise
             
-            try:
-                docs_result = retriever.invoke({"query": cleaned_prompt})
-            except Exception:
-                try:
-                    docs_result = retriever.invoke(cleaned_prompt)
-                except Exception:
-                    try:
-                        docs_result = retriever.get_relevant_documents(cleaned_prompt)
-                    except Exception:
-                        docs_result = []
-
-            if isinstance(docs_result, list):
-                docs = docs_result
-            else:
-                try:
-                    docs = list(docs_result)
-                except Exception:
-                    docs = []
-
-            context = "\n\n".join([getattr(d, "page_content", str(d)) for d in docs]) if docs else "無相關參考資料。"
-
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=f"使用者資料與問題：{cleaned_prompt}\n\n參考資料：{context}\n\n對話歷史：{chat_history_text}")
-            ]
-
-            response = chat_model.invoke(messages)
-
-            return getattr(response, "content", str(response))
-
-        answer = timeout_handler(30, process_conversation)
-        if isinstance(answer, Exception):
-            raise answer
-
+        # 3. 初始化向量資料庫與檢索器 (Retriever)
         try:
-            if hasattr(memory, "save_context"):
-                memory.save_context({"input": cleaned_prompt}, {"answer": answer})
-        except Exception:
-            logger.debug("無法將回合寫入記憶", exc_info=True)
+            db = Chroma(
+                collection_name="fortunetelling_rag_db",
+                embedding_function=embeddings,
+                persist_directory=CHROMA_PATH,
+            )
+            self.retriever = db.as_retriever(
+                search_type="mmr",
+                search_kwargs={"k": 5, "fetch_k": 30, "lambda_mult": 0.5}
+            )
+        except Exception as e:
+            logger.error(f"Initializing ChromaDB fails: {e}", exc_info=True)
+            raise
+            
+        # 4. 建立提示詞模板
+        self.prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
+        
+        logger.info("RAG initialization complete.")
 
-        if isinstance(answer, str) and len(answer) >= 1000:
-            logger.warning("Response near limit: %s", len(answer))
-            answer += "\n\n欸！你真的以為開發者很有錢喔！問少一點啦"
+    def _format_chat_history(self, chat_history: List[Tuple[str, str]]) -> str:
+        """將儲存的對話歷史格式化為純文字。"""
+        if not chat_history:
+            return "無對話歷史"
+        
+        formatted_history = []
+        for user_msg, ai_msg in chat_history:
+            formatted_history.append(f"使用者: {user_msg}\n小傑: {ai_msg}")
+        return "\n---\n".join(formatted_history)
 
-        logger.info(f"Conversational RAG pipeline completed for user {user_id}")
-        return answer
+    def generate_response(self, user_id: str, prompt: str, session: Dict) -> Tuple[str, Dict]:
+        """
+        整合檢索、記憶管理和模型呼叫。
 
-    except TimeoutError:
-        logger.error("LLM call timed out")
-        return "哎呀，小童跑了...去別墅裡面唱K了！等下再來！"
-    except Exception as e:
-        logger.error(f"Conversational RAG pipeline error: {str(e)}", exc_info=True)
-        return "玩了！出大事了，等下再試試看吧"
+        Args:
+            user_id (str): 使用者的唯一識別碼。
+            prompt (str): 包含使用者背景資料和當前問題的完整提示。
+            session (Dict): 從 Redis 載入的當前使用者會話資料。
 
-# run_rag_pipeline
-def run_rag_pipeline(prompt: str) -> str:
-    """原有的 RAG pipeline 函數"""
-    try:
-        if not validate_input(prompt):
-            return "喂喂，處理不了啦！資料怪怪的或是你問題太多"
-
-        cleaned_prompt = bleach.clean(prompt, strip=True)
-        logger.info("Processing cleaned input: %s", cleaned_prompt[:50])
-
-        retriever = db.as_retriever(
-            search_type="mmr",
-            search_kwargs={"k": 5, "fetch_k": 40, "lambda_mult": 0.45}
-        )
-
+        Returns:
+            Tuple[str, Dict]: 一個包含 (AI 回覆, 更新後的 session 物件) 的元組。
+        """
+        logger.info(f"starting generating response for user {user_id}...")
+        
         try:
-            docs_result = retriever.invoke({"query": cleaned_prompt})
-        except Exception:
-            try:
-                docs_result = retriever.invoke(cleaned_prompt)
-            except Exception:
-                try:
-                    docs_result = retriever.get_relevant_documents(cleaned_prompt)
-                except Exception:
-                    docs_result = []
+            # 1. 檢索相關文件
+            retrieved_docs = self.retriever.invoke(prompt)
+            context = "\n\n".join([doc.page_content for doc in retrieved_docs])
+            if not context:
+                context = "無相關參考資料。"
 
-        # 簡化處理：主要接受 list，否則嘗試轉 list，失敗則空列表
-        if isinstance(docs_result, list):
-            docs = docs_result
-        else:
-            try:
-                docs = list(docs_result)
-            except Exception:
-                docs = []
+            # 2. 從 session 中載入並格式化對話歷史
+            chat_history = session.get("chat_history", [])
+            formatted_history = self._format_chat_history(chat_history)
 
-        context = "\n\n".join([getattr(doc, "page_content", str(doc)) for doc in docs])
+            # 3. 組合完整的提示詞
+            messages = self.prompt_template.format_messages(
+                context=context,
+                chat_history=formatted_history,
+                input=prompt
+            )
 
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=f"使用者資料與問題：{cleaned_prompt}\n\n參考資料：{context}")
-        ]
+            # 4. 呼叫 LLM
+            logger.info(f"正在為使用者 {user_id} 呼叫 LLM...")
+            response = self.chat_model.invoke(messages)
+            answer = response.content
+            logger.info(f"成功從 LLM 收到使用者 {user_id} 的回覆。")
+            
+            # 5. 更新對話歷史
+            # 將新的問答對 (tuple) 加入到歷史記錄的開頭
+            chat_history.insert(0, (prompt, answer))
+            
+            # 確保歷史記錄只保留最近的 N 輪
+            session["chat_history"] = chat_history[:CONVERSATION_WINDOW_SIZE]
 
-        try:
-            response = chat_model.invoke(messages)
-        except TypeError:
-            response = chat_model.invoke(messages)
-        answer = getattr(response, "content", str(response))
+            # 6. 回傳結果和更新後的 session
+            return answer, session
 
-        if isinstance(answer, str) and len(answer) >= 5000:
-            logger.warning("Response near limit: %s", len(answer))
-            answer += "\n\n話太多要爆炸啦！問題縮短點再問我哦！"
+        except Exception as e:
+            logger.error(f"為使用者 {user_id} 生成回覆時發生錯誤: {e}", exc_info=True)
+            return "哎呀！我這小童的腦袋瓜好像打結了，你等我一下，我去喝口水潤潤腦再回來！", session
 
-        return answer
-
-    except TimeoutError:
-        logger.error("LLM call timed out")
-        return "哎呀，小童跑了...去別墅裡面唱K了！等下再來！"
-    except Exception as e:
-        logger.error(f"RAG pipeline error: {str(e)}", exc_info=True)
-        return "抱歉，算命小童算命途中遇到點問題，請再試一次！"
+rag_system = RAGSystem()

@@ -1,8 +1,11 @@
 import os
 import logging
 import time
+import threading
+import signal
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
+
 from dotenv import load_dotenv
 from redis import Redis
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -12,26 +15,37 @@ from langchain_chroma import Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import schedule
 
-# 設定日誌
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+from core.logger_config import setup_logger
+
+logger = setup_logger('embedding')
 
 load_dotenv()
 
-MODEL = os.getenv("RAG_MODEL", "cwchang/llama3-taide-lx-8b-chat-alpha1:q3_k_s")
-CHROMA_PATH = os.getenv("CHROMA_PATH", "./fortunetell_chroma__db")
+# 從環境變數讀取設定
+MODEL = os.getenv("RAG_MODEL")
+CHROMA_PATH = os.getenv("CHROMA_PATH", "chroma_db")
 SERVICE_ACCOUNT_PATH = os.getenv("SERVICE_ACCOUNT_PATH", "service_account.json")
 FOLDER_ID = os.getenv("FOLDER_ID")
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-SYNC_INTERVAL_SECONDS = int(os.getenv("SYNC_INTERVAL_SECONDS", "86400")) 
+REDIS_URL = os.getenv("REDIS_URL")
+# 24 hours
+SYNC_INTERVAL_SECONDS =  86400
 
-# 初始化 Redis
-redis_client = Redis.from_url(REDIS_URL, decode_responses=True)
+# --- Redis Key 常數 ---
 EMBEDDED_KEY = "embedded_file_ids"
 LAST_SYNC_KEY = "last_sync_time"
 SYNC_STATUS_KEY = "sync_status"
 
-# 全局 db
+# --- 全域客戶端初始化 ---
+# 加上重試機制，增加連線穩定性
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+def initialize_redis_client():
+    logger.info("Initializing Redis client...")
+    client = Redis.from_url(REDIS_URL, decode_responses=True)
+    client.ping()
+    logger.info("Redis client initialized successfully.")
+    return client
+
+redis_client = initialize_redis_client()
 embeddings = OllamaEmbeddings(model=MODEL)
 db = Chroma(
     collection_name="fortunetelling_rag_db",
@@ -39,131 +53,166 @@ db = Chroma(
     persist_directory=CHROMA_PATH,
 )
 
-def load_embedded_record():
-    """從 Redis 載入已嵌入 ID set"""
+# --- 核心函式 ---
+def load_embedded_ids_from_redis() -> set:
+    """從 Redis 載入已嵌入檔案的 ID 集合"""
     return set(redis_client.smembers(EMBEDDED_KEY))
 
-def save_embedded_record(new_ids: set):
-    """新增 ID 到 Redis set"""
+def add_embedded_ids_to_redis(new_ids: set):
+    """將新嵌入的檔案 ID 新增到 Redis 集合中"""
     if new_ids:
         redis_client.sadd(EMBEDDED_KEY, *new_ids)
-        logger.info(f"Added {len(new_ids)} IDs to embedded record")
+        logger.info(f"Successfully recorded {len(new_ids)} new file IDs to Redis.")
 
-def clean_obsolete_embeddings(current_ids: set):
-    """刪除已移除的文件嵌入"""
-    embedded_ids = load_embedded_record()
-    obsolete = embedded_ids - current_ids
-    if obsolete:
-        for file_id in obsolete:
-            results = db.get(where={"id": file_id})
-            if results:
-                db.delete(results["ids"])
-                redis_client.srem(EMBEDDED_KEY, file_id)
-                logger.info(f"Removed obsolete embedding for ID: {file_id}")
+def clean_obsolete_embeddings(current_file_ids: set):
+    """
+    比對 Redis 中紀錄的 ID 與雲端硬碟當前的檔案 ID，
+    刪除在雲端已被移除的檔案對應的向量。
+    """
+    embedded_ids = load_embedded_ids_from_redis()
+    obsolete_ids = embedded_ids - current_file_ids
+    
+    if not obsolete_ids:
+        return
 
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(300))  # 重試 3 次，間隔 5 分鐘
-def sync_drive_embeddings():
-    logger.info("🔄 開始同步 Google Drive 文件...")
+    logger.info(f"Found {len(obsolete_ids)} obsolete files, preparing to remove from vector database...")
+    # 注意：Chroma 的 delete 方法目前不支援基於 metadata 過濾
+    # 我們需要先 get 再 delete，這在大量刪除時效率較低
+    # 這是目前 Chroma API 的限制
     try:
-        redis_client.set(LAST_SYNC_KEY, int(time.time()))  # 記錄開始時間
-        redis_client.set(SYNC_STATUS_KEY, "running")
+        results = db.get(where={"source": {"$in": list(obsolete_ids)}})
+        if results and results["ids"]:
+            db.delete(ids=results["ids"])
+            redis_client.srem(EMBEDDED_KEY, *obsolete_ids)
+            logger.info(f"Successfully removed {len(results['ids'])} vector blocks related to obsolete files.")
+    except Exception as e:
+        logger.error(f"Error removing obsolete vectors from ChromaDB: {e}", exc_info=True)
 
-        embedded_ids = load_embedded_record()
 
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(300))
+def sync_drive_embeddings():
+    """
+    與 Google Drive 同步，處理新增、刪除的檔案，並更新向量資料庫。
+    """
+    logger.info("Starting Google Drive synchronization...")
+    redis_client.set(SYNC_STATUS_KEY, "running")
+    
+    try:
+        # 1. 載入雲端硬碟文件
         loader = GoogleDriveLoader.from_service_account_file(
             service_account_path=SERVICE_ACCOUNT_PATH,
             folder_id=FOLDER_ID,
             recursive=False,
+            # 優化：只載入 metadata，避免立即下載整個檔案內容
+            file_loader_cls=lambda *args, **kwargs: None, 
+            load_auth=True
         )
         docs = loader.load()
+        logger.info(f"Found {len(docs)} files from Google Drive.")
 
-        current_ids = {doc.metadata.get("id") for doc in docs}
-        clean_obsolete_embeddings(current_ids)
+        # 2. 清理過時的嵌入
+        current_file_ids = {doc.metadata.get("source") for doc in docs}
+        clean_obsolete_embeddings(current_file_ids)
 
-        new_docs = [doc for doc in docs if doc.metadata.get("id") not in embedded_ids]
-        logger.info(f"✅ 新增文件數量：{len(new_docs)}")
-
+        # 3. 找出需要新增的文件
+        embedded_ids = load_embedded_ids_from_redis()
+        new_docs = [doc for doc in docs if doc.metadata.get("source") not in embedded_ids]
+        
         if not new_docs:
-            logger.info("✅ 無需更新，所有文件已嵌入過。")
+            logger.info("No new files to embed.")
             redis_client.set(SYNC_STATUS_KEY, "success")
+            redis_client.set(LAST_SYNC_KEY, int(time.time()))
             return
 
+        logger.info(f"Found {len(new_docs)} new files, starting embedding process...")
+        
+        # 4. 分割與嵌入文件
+        # 注意：重新建立載入器以實際讀取文件內容
+        full_content_loader = GoogleDriveLoader.from_service_account_file(
+            service_account_path=SERVICE_ACCOUNT_PATH,
+            file_ids=[doc.metadata.get("source") for doc in new_docs]
+        )
+        docs_with_content = full_content_loader.load()
+
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        split_docs = splitter.split_documents(new_docs)
+        split_docs = splitter.split_documents(docs_with_content)
+        
+        if not split_docs:
+            logger.warning("No embeddable chunks generated after document splitting.")
+            redis_client.set(SYNC_STATUS_KEY, "success") # 仍視為成功，因為沒有新內容
+            return
 
-        def embed_chunk(chunk):
-            uuids = [str(uuid4()) for _ in chunk]
-            db.add_documents(chunk, ids=uuids)
+        db.add_documents(split_docs) # ChromaDB 會自動處理批次和 ID
+        logger.info(f"Successfully embedded {len(split_docs)} document chunks.")
 
-        with ThreadPoolExecutor(max_workers=2) as executor:  # Fly.io 資源限制，降為 2 執行緒
-            chunk_size = max(1, len(split_docs) // 2)
-            chunks = [split_docs[i:i + chunk_size] for i in range(0, len(split_docs), chunk_size)]
-            executor.map(embed_chunk, chunks)
-
-        logger.info(f"✅ 已嵌入 {len(split_docs)} 區塊")
-
-        new_ids = {doc.metadata.get("id") for doc in new_docs}
-        save_embedded_record(new_ids)
+        # 5. 更新 Redis 紀錄
+        new_file_ids = {doc.metadata.get("source") for doc in new_docs}
+        add_embedded_ids_to_redis(new_file_ids)
+        
         redis_client.set(SYNC_STATUS_KEY, "success")
-        logger.info("✅ 嵌入紀錄已更新")
+        redis_client.set(LAST_SYNC_KEY, int(time.time()))
+        logger.info("Google Drive synchronization completed successfully.")
+
     except Exception as e:
-        redis_client.set(SYNC_STATUS_KEY, f"failed: {str(e)}")
-        logger.error(f"Sync error: {str(e)}")
+        # 發生任何錯誤時，標記為失敗並重新拋出，讓 tenacity 重試機制介入
+        redis_client.set(SYNC_STATUS_KEY, f"failed: {e}")
+        logger.error(f"Error occurred during synchronization: {e}", exc_info=True)
         raise
 
-def validate_texts(texts: list[str]) -> bool:
-    """驗證手動輸入文本"""
-    if not texts:
-        logger.warning("Empty texts received")
-        return False
-    for text in texts:
-        if len(text) > 10000:
-            logger.warning("Text too long: %d", len(text))
-            return False
-    return True
+# --- 定時任務管理 ---
+def run_background_scheduler(stop_event: threading.Event):
+    """
+    一個會在背景執行緒中運行的函式，負責管理定時任務。
+    
+    Args:
+        stop_event: 一個 threading.Event 物件，用來通知此執行緒停止。
+    """
+    logger.info(f"Scheduler started. Syncing Google Drive every {SYNC_INTERVAL_SECONDS} seconds.")
 
-def embedd_manual_from_text(texts: list[str], store: bool = True):
-    if not validate_texts(texts):
-        logger.error("Invalid texts, skipping embed")
-        return None
-
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    split_docs = splitter.create_documents(texts)
-    logger.info(f"✅ 手動傳入文字，共切分為 {len(split_docs)} 區塊")
-
-    if store:
-        def embed_chunk(chunk):
-            uuids = [str(uuid4()) for _ in chunk]
-            db.add_documents(chunk, ids=uuids)
-
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            chunk_size = max(1, len(split_docs) // 2)
-            chunks = [split_docs[i:i + chunk_size] for i in range(0, len(split_docs), chunk_size)]
-            executor.map(embed_chunk, chunks)
-        logger.info("✅ 手動嵌入資料已儲存")
-    else:
-        return db
-
-def load_vector_db():
-    """載入 db（已全局初始化）"""
-    return db
-
-def run_scheduler():
-    """運行定時任務"""
-    schedule.every(SYNC_INTERVAL_SECONDS).seconds.do(sync_drive_embeddings)
-    logger.info(f"📅 定時任務已啟動，每 {SYNC_INTERVAL_SECONDS} 秒檢查一次 Google Drive")
-    while True:
-        schedule.run_pending()
-        time.sleep(60)  # 每分鐘檢查，避免 CPU 過載
-
-if __name__ == "__main__":
-    import threading
-    # 在後台執行緒運行定時任務
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-    scheduler_thread.start()
-    # 保持主執行緒存活
+    # 1. 立即執行一次首次同步 (滿足您的要求)
     try:
-        while True:
-            time.sleep(3600)  # 主執行緒休眠，任務由後台處理
-    except KeyboardInterrupt:
-        logger.info("🛑 停止定時任務")
+        sync_drive_embeddings()
+    except Exception:
+        logger.error("Initial synchronization failed, the scheduler will retry after the specified interval.")
+
+    # 2. 設定週期性任務
+    schedule.every(SYNC_INTERVAL_SECONDS).seconds.do(sync_drive_embeddings)
+
+    # 3. 進入主迴圈，直到收到停止訊號
+    logger.info("Initial synchronization completed, entering scheduled wait mode...")
+    while not stop_event.is_set():
+        schedule.run_pending()
+        # 使用 stop_event.wait() 可以更優雅地等待，而不是固定 sleep
+        # 這裡我們每 60 秒檢查一次，以確保能及時響應停止訊號
+        stop_event.wait(60)
+
+    logger.info("Received stop signal, scheduler thread has been safely shut down.")
+
+
+# --- 主程式進入點 ---
+if __name__ == "__main__":
+    logger.info("Embedding service started...")
+
+    # 建立一個事件(Event)物件，用於在主執行緒和背景執行緒之間通訊
+    shutdown_event = threading.Event()
+
+    # 設計一個訊號處理函式，當使用者按下 Ctrl+C 時，會設定上面的事件
+    def signal_handler(signum, frame):
+        logger.info("Detected shutdown signal (Ctrl+C), preparing to shut down service...")
+        shutdown_event.set()
+
+    # 註冊訊號處理器
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # 啟動背景排程器執行緒
+    scheduler_thread = threading.Thread(
+        target=run_background_scheduler,
+        args=(shutdown_event,),
+        name="SchedulerThread",
+        daemon=True
+    )
+    scheduler_thread.start()
+    logger.info("Main thread is waiting for shutdown signal...")
+    scheduler_thread.join()
+    logger.info("Embedding service has been fully shut down.")
