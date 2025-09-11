@@ -1,7 +1,7 @@
 <!-- Language Switcher -->
 <p align="right">Language: English | <a href="./README_zh-TW.md">中文</a></p>
 
-# Conversational RAG System for LINE Bot
+# Fortune-telling RAG LINE Bot
 
 This project is a sophisticated, conversational AI chatbot designed for the LINE platform. It features a unique, humorous personality and provides insightful analysis based on user inputs. The system demonstrates how to build a modern, secure, and modular AI application by integrating Retrieval-Augmented Generation (RAG), secure session management, and independent background services.
 
@@ -26,7 +26,7 @@ your-project/
 ├── core/
 │   ├── __init__.py
 │   ├── logger_config.py      # Shared logger configuration (outputs to the logs/ directory)
-│   └── session_manager.py    # Handles session encryption and Redis access
+│   └── session_manager.py    # Handles session(personal information) encryption and Redis access
 │
 ├── util/
 │   ├── __init__.py
@@ -57,7 +57,7 @@ pip install uv
 Install Dependencies:
 
 ```bash
-uv pip install -r requirements.txt
+uv sync
 ```
 
 Set up Google Service Account:
@@ -108,18 +108,18 @@ openssl rand -base64 32
 
 ### 3. Running the Services
 
-If you want to start your own application locally. You will need to run two separate services in four different terminal sessions.
+You will need to run four separate services in four different terminal sessions.
 
 Terminal 1: Start the LINE Bot Application
 
 ```bash
-python app.py
+uv run app.py
 ```
 
 Terminal 2: Start the Google Drive Sync & Embedding Service
 
 ```bash
-python embedding.py
+uv run embedding.py
 ```
 
 Terminal 3:Start the Redis service
@@ -128,7 +128,7 @@ Terminal 3:Start the Redis service
 redis-server.exe
 ```
 
-Terminal 4:Start the ngrok static domain service
+Terminal 4:Start the ngrok domain service
 
 ```bash
 ngrok http http://localhost:5000
@@ -153,7 +153,7 @@ Send Cancel at any time to clear your session and end the conversation.
 For any questions or issues, please open an issue on the repository or contact the developers.
 
 Sonny Huang
-email: <partlysunny31@pm.me>
+<partlysunny31@pm.me>
 
 Zack Yang
-email: <zackaryyang2001@gmail.com>
+<zackaryyang2001@gmail.com>
