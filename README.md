@@ -1,3 +1,6 @@
+<!-- Language Switcher -->
+<p align="right">Language: English | <a href="./README_zh-TW.md">中文</a></p>
+
 # Conversational RAG System for LINE Bot
 
 This project is a sophisticated, conversational AI chatbot designed for the LINE platform. It features a unique, humorous personality and provides insightful analysis based on user inputs. The system demonstrates how to build a modern, secure, and modular AI application by integrating Retrieval-Augmented Generation (RAG), secure session management, and independent background services.
