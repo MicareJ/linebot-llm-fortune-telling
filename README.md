@@ -5,10 +5,13 @@ This project is a sophisticated, conversational AI chatbot designed for the LINE
 ## Core Features
 
 - Engaging AI Personality: A meticulously crafted system prompt gives the AI a witty and entertaining personality, making user interactions enjoyable and memorable.
+
 - RAG-Powered Knowledge Base: Leverages LangChain and ChromaDB to enable the AI to retrieve information from a private knowledge base hosted on Google Drive, ensuring responses are both contextual and accurate.
-- Asynchronous Document Embedding: A standalone service (embedding.py) runs in the background, periodically scanning a Google Drive folder to automatically update the vector database with new information.
+
 - Secure Session Management: Implements an Envelope Encryption pattern with Redis to securely manage user session data. This ensures that even if the database is compromised, sensitive information remains encrypted and inaccessible.
+
 - Modular Architecture: Core functionalities like logging and session management are abstracted into a dedicated core module, promoting clean code and maintainability in the main application logic.
+
 - LINE Bot Integration: A Flask-based webhook provides seamless integration with the LINE Messaging API for a fluid, real-time chat experience.
 
 ## Project Architecture
@@ -34,6 +37,7 @@ your-project/
 ├── data/      #The government stroke data of comman words 
 ├── logs/                     # Log output directory
 ├── .env                      # Environment variable configuration
+├── uv.lock                   # Python dependency management (uv)
 └── pyproject.toml            # Python dependency management (uv)
 ```
 
@@ -75,8 +79,8 @@ LINE_CHANNEL_SECRET="Your Line Channel Secret"
 # --- Google & RAG Configuration ---
 FOLDER_ID="Your Google Drive Folder ID"
 GOOGLE_API_KEY="Your Google Maps API Key (for geolocation and timezone)"
-EMBEDDING_MODEL="infgrad/stella-base-zh-v3-1792d" # Recommended Chinese Embedding Model
-MODEL_REPO_ID="mistralai/Mixtral-8x7B-Instruct-v0.1" # Selected Hugging Face Model
+EMBEDDING_MODEL="You can try your embedding model" # Recommended Chinese Embedding Model
+MODEL_REPO_ID="You can try your model on Huggingface" # Selected Hugging Face Model
 
 # --- Redis Configuration ---
 REDIS_URL="redis://localhost:6379/0" # Redis connection URL (DB can be specified)
