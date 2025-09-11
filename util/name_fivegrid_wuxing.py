@@ -1,6 +1,6 @@
 from functools import lru_cache
 from typing import Dict
-from .stroke_lookup import load_char_to_stroke_cache, get_name_stroke_info, validate_name
+from .stroke_lookup import load_char_to_stroke_cache, get_name_stroke_info
 
 from core.logger_config import setup_logger
 
@@ -23,9 +23,6 @@ def analyze_name_five_grid(name: str) -> Dict[str, any]:
     """計算姓名五格和五行"""
     try:
         load_char_to_stroke_cache()  # 確保快取載入
-
-        if not validate_name(name) or len(name) < 2:
-            raise ValueError("姓名至少需為兩字，且為繁體中文")
 
         stroke_info = get_name_stroke_info(name)
 

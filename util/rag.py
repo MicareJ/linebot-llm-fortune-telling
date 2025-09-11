@@ -9,15 +9,13 @@ from langchain.prompts import ChatPromptTemplate
 from langchain_chroma import Chroma
 from huggingface_hub import login
 
-# 匯入您自訂的 logger
 from core.logger_config import setup_logger
 
-# --- 初始化與設定 ---
 logger = setup_logger('rag')
 load_dotenv()
 
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
-LLM_MODEL = os.getenv("LLM_MODEL", "mistralai/Mixtral-8x7B-Instruct-v0.1")
+LLM_MODEL = os.getenv("LLM_MODEL")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 CHROMA_PATH = os.getenv("CHROMA_PATH")
 CONVERSATION_WINDOW_SIZE = 3 
@@ -28,7 +26,7 @@ if HUGGINGFACE_API_KEY:
     except Exception as e:
         logger.debug(f"Hugging Face login warning: {e}")
 
-# --- 提示詞模板 (Prompt Template) ---
+# --- Prompt Template ---
 PROMPT_TEMPLATE = """
 # 角色與指令 (System Prompt)
 你是一位超級搞笑的算命小童，名叫「小傑」，精通中國傳統命理學，但你總是用誇張、幽默、自嘲的口吻來回答，絕對不能嚴肅或辱罵使用者，只能讓人笑到噴飯，感覺像在跟一個自帶笑點的搞笑朋友聊天。你會自嘲自己是個「諧咖」，比如說「哎呀，我這小童腦袋瓜裡塞滿了八字五行，結果還老是算錯自己的午餐錢哈哈哈！」你的幽默風格是：用生活化的誇張比喻、雙關語、流行文化梗、自黑橋段、意外轉折的包袱，讓每句話都像脫口秀一樣爆笑，但永遠正面、鼓勵，絕不讓用戶覺得被嘲笑，而是覺得被逗樂並得到啟發。比如，別說「你缺水」，要說「哇塞，你的五行缺水？難怪你總是口乾舌燥像沙漠裡的仙人掌，來來來，多喝水變成游泳健將吧！」
@@ -66,12 +64,12 @@ PROMPT_TEMPLATE = """
 
 class RAGSystem:
     """
-    封裝了 RAG 所需所有元件的類別，包含模型、檢索器和提示詞模板。
+    封裝了 RAG 所需所有元件的類別。
     """
     def __init__(self):
         logger.info("Initializing RAG system...")
         
-        # 1. 初始化 LLM 模型
+        # 初始化對話模型
         try:
             hf_llm = HuggingFaceEndpoint(
                 repo_id=LLM_MODEL,
@@ -87,7 +85,7 @@ class RAGSystem:
             logger.error(f"Initializing LLM fails: {e}", exc_info=True)
             raise
 
-        # 2. 初始化 Embeddings
+        # 初始化Embeddings模型
         try:
             embeddings = HuggingFaceEmbeddings(
                 model_name=EMBEDDING_MODEL,
@@ -98,7 +96,7 @@ class RAGSystem:
             logger.error(f"Initializing Embeddings fails: {e}", exc_info=True)
             raise
             
-        # 3. 初始化向量資料庫與檢索器 (Retriever)
+        # 3. 初始化DB & Retriever
         try:
             db = Chroma(
                 collection_name="fortunetelling_rag_db",
@@ -121,7 +119,7 @@ class RAGSystem:
     def _format_chat_history(self, chat_history: List[Tuple[str, str]]) -> str:
         """將儲存的對話歷史格式化為純文字。"""
         if not chat_history:
-            return "無對話歷史"
+            return "無對話紀錄"
         
         formatted_history = []
         for user_msg, ai_msg in chat_history:
@@ -161,10 +159,10 @@ class RAGSystem:
             )
 
             # 4. 呼叫 LLM
-            logger.info(f"正在為使用者 {user_id} 呼叫 LLM...")
+            logger.info(f"Invoking LLM Response for {user_id} ...")
             response = self.chat_model.invoke(messages)
             answer = response.content
-            logger.info(f"成功從 LLM 收到使用者 {user_id} 的回覆。")
+            logger.info(f"Successfully got response from LLM for {user_id} ")
             
             # 5. 更新對話歷史
             # 將新的問答對 (tuple) 加入到歷史記錄的開頭
@@ -177,7 +175,7 @@ class RAGSystem:
             return answer, session
 
         except Exception as e:
-            logger.error(f"為使用者 {user_id} 生成回覆時發生錯誤: {e}", exc_info=True)
-            return "哎呀！我這小童的腦袋瓜好像打結了，你等我一下，我去喝口水潤潤腦再回來！", session
+            logger.error(f"Error shows up when generating response for {user_id} : {e}", exc_info=True)
+            return "等下等下腦子有點當機了...", session
 
 rag_system = RAGSystem()

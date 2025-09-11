@@ -19,9 +19,9 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
-from rag.name_fivegrid_wuxing import format_fivegrid_wuxing_prompt
-from rag.bazi_true_solar import format_bazi_report
-from rag.rag import rag_system 
+from util.name_fivegrid_wuxing import format_fivegrid_wuxing_prompt
+from util.bazi_true_solar import format_bazi_report
+from util.rag import rag_system 
 
 from core.logger_config import setup_logger
 
@@ -188,6 +188,8 @@ limiter = Limiter(app=app,
                   storage_uri=REDIS_URL)
 
 def validate_name(name: str) -> bool:
+    if len(name) < 2:
+        raise ValueError("名字至少兩個字")
     return bool(re.match(r"^[\u4e00-\u9fff]+$", name))
 
 def validate_date(date: str) -> bool:

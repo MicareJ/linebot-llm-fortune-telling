@@ -135,13 +135,7 @@ def load_char_to_stroke_cache():
 # 模組載入時自動載入快取
 load_char_to_stroke_cache()
 
-def validate_name(name: str) -> bool:
-    """驗證姓名是否為繁體中文"""
-    return bool(re.match(r"^[\u4e00-\u9fff]+$", name))
-
 @lru_cache(maxsize=100)
 def get_name_stroke_info(name: str) -> List[Tuple[str, int]]:
     """查詢姓名的每個字筆畫數"""
-    if not validate_name(name):
-        raise ValueError("姓名必須為繁體中文")
     return [(ch, char_to_stroke.get(ch, -1)) for ch in name]
