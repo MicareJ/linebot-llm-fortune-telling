@@ -21,7 +21,7 @@ from flask_limiter.util import get_remote_address
 
 from util.name_fivegrid_wuxing import format_fivegrid_wuxing_prompt
 from util.bazi_true_solar import format_bazi_report
-from util.rag import rag_system 
+from core.rag import rag_system 
 
 from core.logger_config import setup_logger
 

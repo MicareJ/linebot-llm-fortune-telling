@@ -1,4 +1,3 @@
-<!-- Language Switcher -->
 <p align="right">Language: English | <a href="./README_zh-TW.md">中文</a></p>
 
 # Fortune-telling RAG LINE Bot

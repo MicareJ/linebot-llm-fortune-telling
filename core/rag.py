@@ -1,10 +1,11 @@
 import os
+import requests
 from typing import Dict, List, Tuple
 
 from dotenv import load_dotenv
+from langchain_core.embeddings import Embeddings
 from langchain_huggingface.llms.huggingface_endpoint import HuggingFaceEndpoint
 from langchain_huggingface.chat_models import ChatHuggingFace
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.prompts import ChatPromptTemplate
 from langchain_chroma import Chroma
 from huggingface_hub import login
@@ -14,19 +15,23 @@ from core.logger_config import setup_logger
 logger = setup_logger('rag')
 load_dotenv()
 
+# --- 環境變數與設定 ---
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 LLM_MODEL = os.getenv("LLM_MODEL")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 CHROMA_PATH = os.getenv("CHROMA_PATH")
+EMBEDDING_SERVICE_URL = os.getenv("EMBEDDING_SERVICE_URL") # 使用嵌入服務的 URL
 CONVERSATION_WINDOW_SIZE = 3 
+
+if not all([HUGGINGFACE_API_KEY, LLM_MODEL, CHROMA_PATH, EMBEDDING_SERVICE_URL]):
+    raise ValueError("RAG system environment variables are not fully configured.")
 
 if HUGGINGFACE_API_KEY:
     try:
-        login(HUGGINGFACE_API_KEY)
+        login(token=HUGGINGFACE_API_KEY)
     except Exception as e:
-        logger.debug(f"Hugging Face login warning: {e}")
+        logger.warning(f"Hugging Face login warning: {e}")
 
-# --- Prompt Template ---
+# --- Prompt Template (維持不變) ---
 PROMPT_TEMPLATE = """
 # 角色與指令 (System Prompt)
 你是一位超級搞笑的算命小童，名叫「小傑」，精通中國傳統命理學，但你總是用誇張、幽默、自嘲的口吻來回答，絕對不能嚴肅或辱罵使用者，只能讓人笑到噴飯，感覺像在跟一個自帶笑點的搞笑朋友聊天。你會自嘲自己是個「諧咖」，比如說「哎呀，我這小童腦袋瓜裡塞滿了八字五行，結果還老是算錯自己的午餐錢哈哈哈！」你的幽默風格是：用生活化的誇張比喻、雙關語、流行文化梗、自黑橋段、意外轉折的包袱，讓每句話都像脫口秀一樣爆笑，但永遠正面、鼓勵，絕不讓用戶覺得被嘲笑，而是覺得被逗樂並得到啟發。比如，別說「你缺水」，要說「哇塞，你的五行缺水？難怪你總是口乾舌燥像沙漠裡的仙人掌，來來來，多喝水變成游泳健將吧！」
@@ -62,6 +67,41 @@ PROMPT_TEMPLATE = """
 {input}
 """
 
+# --- 【重要改變】: 建立一個呼叫 API 的嵌入類別 ---
+class APIEmbeddings(Embeddings):
+    """
+    一個符合 LangChain 標準的自訂 Embedding 類別。
+    它不自己計算，而是透過 API 呼叫外部的 embedding_service。
+    """
+    def __init__(self, api_url: str):
+        self.api_url = api_url
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """嵌入文件列表 (主要由背景腳本使用，但在此實現以保持完整性)"""
+        logger.info(f"Forwarding {len(texts)} documents to embedding service...")
+        try:
+            response = requests.post(self.api_url, json={"texts": texts})
+            response.raise_for_status()
+            return response.json()["embeddings"]
+        except requests.exceptions.RequestException as e:
+            logger.error(f"API call to embedding service failed for documents: {e}")
+            # 返回一個與輸入長度相符的空向量列表，以避免下游崩潰
+            return [[] for _ in texts]
+
+    def embed_query(self, text: str) -> List[float]:
+        """嵌入單一查詢 (主要由 Retriever 使用)"""
+        logger.info("Forwarding single query to embedding service...")
+        try:
+            # 即使是單一查詢，服務也期望一個列表
+            response = requests.post(self.api_url, json={"texts": [text]})
+            response.raise_for_status()
+            # 從回傳的列表中取出第一個 (也是唯一一個) 向量
+            return response.json()["embeddings"][0]
+        except requests.exceptions.RequestException as e:
+            logger.error(f"API call to embedding service failed for query: {e}")
+            # 在出錯時返回一個空向量
+            return []
+
 class RAGSystem:
     """
     封裝了 RAG 所需所有元件的類別。
@@ -69,7 +109,7 @@ class RAGSystem:
     def __init__(self):
         logger.info("Initializing RAG system...")
         
-        # 初始化對話模型
+        # 1. 初始化對話模型
         try:
             hf_llm = HuggingFaceEndpoint(
                 repo_id=LLM_MODEL,
@@ -82,25 +122,21 @@ class RAGSystem:
             )
             self.chat_model = ChatHuggingFace(llm=hf_llm)
         except Exception as e:
-            logger.error(f"Initializing LLM fails: {e}", exc_info=True)
+            logger.error(f"Failed to initialize LLM: {e}", exc_info=True)
             raise
 
-        # 初始化Embeddings模型
+        # 2. 【重要改變】: 初始化呼叫 API 的嵌入物件
         try:
-            embeddings = HuggingFaceEmbeddings(
-                model_name=EMBEDDING_MODEL,
-                model_kwargs={"device": "cpu"},
-                encode_kwargs={"normalize_embeddings": True}
-            )
+            api_embeddings = APIEmbeddings(api_url=EMBEDDING_SERVICE_URL)
         except Exception as e:
-            logger.error(f"Initializing Embeddings fails: {e}", exc_info=True)
+            logger.error(f"Failed to initialize APIEmbeddings wrapper: {e}", exc_info=True)
             raise
             
-        # 3. 初始化DB & Retriever
+        # 3. 初始化 DB & Retriever
         try:
             db = Chroma(
                 collection_name="fortunetelling_rag_db",
-                embedding_function=embeddings,
+                embedding_function=api_embeddings, 
                 persist_directory=CHROMA_PATH,
             )
             self.retriever = db.as_retriever(
@@ -108,13 +144,13 @@ class RAGSystem:
                 search_kwargs={"k": 5, "fetch_k": 30, "lambda_mult": 0.5}
             )
         except Exception as e:
-            logger.error(f"Initializing ChromaDB fails: {e}", exc_info=True)
+            logger.error(f"Failed to initialize ChromaDB: {e}", exc_info=True)
             raise
             
         # 4. 建立提示詞模板
         self.prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
         
-        logger.info("RAG initialization complete.")
+        logger.info("RAG system initialization complete.")
 
     def _format_chat_history(self, chat_history: List[Tuple[str, str]]) -> str:
         """將儲存的對話歷史格式化為純文字。"""
@@ -129,19 +165,12 @@ class RAGSystem:
     def generate_response(self, user_id: str, prompt: str, session: Dict) -> Tuple[str, Dict]:
         """
         整合檢索、記憶管理和模型呼叫。
-
-        Args:
-            user_id (str): 使用者的唯一識別碼。
-            prompt (str): 包含使用者背景資料和當前問題的完整提示。
-            session (Dict): 從 Redis 載入的當前使用者會話資料。
-
-        Returns:
-            Tuple[str, Dict]: 一個包含 (AI 回覆, 更新後的 session 物件) 的元組。
         """
-        logger.info(f"starting generating response for user {user_id}...")
+        logger.info(f"Starting to generate response for user {user_id}...")
         
         try:
             # 1. 檢索相關文件
+            # retriever.invoke 會自動呼叫我們 APIEmbeddings 中的 embed_query 方法
             retrieved_docs = self.retriever.invoke(prompt)
             context = "\n\n".join([doc.page_content for doc in retrieved_docs])
             if not context:
@@ -159,23 +188,21 @@ class RAGSystem:
             )
 
             # 4. 呼叫 LLM
-            logger.info(f"Invoking LLM Response for {user_id} ...")
+            logger.info(f"Invoking LLM for user {user_id}...")
             response = self.chat_model.invoke(messages)
             answer = response.content
-            logger.info(f"Successfully got response from LLM for {user_id} ")
+            logger.info(f"Successfully got response from LLM for user {user_id}.")
             
             # 5. 更新對話歷史
-            # 將新的問答對 (tuple) 加入到歷史記錄的開頭
             chat_history.insert(0, (prompt, answer))
-            
-            # 確保歷史記錄只保留最近的 N 輪
             session["chat_history"] = chat_history[:CONVERSATION_WINDOW_SIZE]
 
             # 6. 回傳結果和更新後的 session
             return answer, session
 
         except Exception as e:
-            logger.error(f"Error shows up when generating response for {user_id} : {e}", exc_info=True)
-            return "等下等下腦子有點當機了...", session
+            logger.error(f"An error occurred while generating response for {user_id}: {e}", exc_info=True)
+            return "我這腦袋瓜好像被雷打到短路了...", session
 
+# 在應用程式啟動時，初始化一次 RAG 系統
 rag_system = RAGSystem()
