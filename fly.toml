@@ -1,10 +1,28 @@
-app = "linebot-llm-fortune-telling"
+# fly.toml file generated for linebot-llm-fortune-telling on 2025-09-15T00:15:00+08:00
+
+app = 'linebot-llm-fortune-telling'
+primary_region = 'hkg' # 香港，離台灣最近的區域之一
 
 [build]
+  dockerfile = 'Dockerfile'
 
 [http_service]
-  internal_port = 5000
+  # 這個服務是公開的，用來接收 LINE 的 Webhook
+  internal_port = 8080 # 對應到 Dockerfile 中的 EXPOSE 和 line_bot_service 的端口
   force_https = true
+  auto_stop_machines = true # 當沒有流量時自動停止機器以節省成本
+  auto_start_machines = true # 當有流量時自動啟動機器
+  min_machines_running = 0 # 允許縮容到 0 台機器
+  processes = ['app'] # 指定這個服務由 'app' process 處理
 
-[env]
-  PORT = "5000"
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "10s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/health" 
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 2048 

@@ -251,6 +251,10 @@ def callback():
         abort(500)
     return "OK"
 
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
     user_id = event.source.user_id
@@ -422,6 +426,8 @@ def handle_message(event):
                 messages=[TextMessage(text="靠！哪個工程師寫的爛軟體，出問題了啦")]
             )
         )
+
+
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
